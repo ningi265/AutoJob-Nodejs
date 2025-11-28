@@ -88,3 +88,32 @@ exports.getAllRecentJobs = async (req, res, next) => {
     });
   }
 };
+
+exports.getJobDetails = async (req, res, next) => {
+  try {
+    const { job_url } = req.body || {};
+    if (!job_url) {
+      return res.status(400).json({
+        success: false,
+        message: 'job_url is required',
+      });
+    }
+
+    const details = await scrapeService.scrapeJobDetails(job_url);
+
+    return res.json({
+      success: true,
+      job_url,
+      details,
+    });
+  } catch (err) {
+    console.error('❌ Error in getJobDetails:', err);
+    return res.status(500).json({
+      success: false,
+      job_url: req.body?.job_url || null,
+      details: null,
+      error: err.message,
+      message: 'An error occurred while fetching job details. Please try again.',
+    });
+  }
+};

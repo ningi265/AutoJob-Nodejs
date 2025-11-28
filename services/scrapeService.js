@@ -155,19 +155,7 @@ async function scrapeAllJobsComprehensive() {
         // Wait a bit for JS to render initial listings
         await new Promise(resolve => setTimeout(resolve, 3000));
 
-        // Scroll to bottom repeatedly to trigger any lazy-loading of more listings
-        for (let i = 0; i < 10; i += 1) {
-          const beforeCount = await page.$$eval('li.job_listing, .job_listing, [class*=job_listing]', els => els.length);
-          await page.evaluate(() => {
-            window.scrollTo(0, document.body.scrollHeight);
-          });
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          const afterCount = await page.$$eval('li.job_listing, .job_listing, [class*=job_listing]', els => els.length);
-          if (!afterCount || afterCount <= beforeCount) {
-            break;
-          }
-        }
-
+        // Only parse initially rendered listings on the first page (no load-more clicks)
         const html = await page.content();
         const $ = cheerio.load(html);
 
@@ -289,6 +277,68 @@ async function scrapeAllJobsComprehensive() {
   return jobs;
 }
 
+async function scrapeJobDetails(jobUrl) {
+  // Fetch the job detail page and extract a structured description
+  const headers = { 'User-Agent': DEFAULT_USER_AGENT };
+
+  const resp = await axios.get(jobUrl, {
+    headers,
+    timeout: parseInt(process.env.SCRAPE_TIMEOUT_MS || '10000', 10),
+  });
+  const $ = cheerio.load(resp.data);
+
+  // These selectors are generic but tuned for WP job detail pages
+  const title = $('h1, h2.entry-title').first().text().trim() || null;
+  const company = $('.company, .job-company, .job_listing-company, .employer')
+    .first()
+    .text()
+    .trim() || null;
+  const location = $('.location, .job-location, .job_listing-location')
+    .first()
+    .text()
+    .trim() || null;
+
+  // Full description: take the main content block
+  const descContainer =
+    $('.job_description, .job-description, .entry-content, .content-area').first();
+  let descriptionHtml = descContainer.html() || '';
+  let descriptionText = descContainer.text() || '';
+  descriptionHtml = descriptionHtml.trim();
+  descriptionText = descriptionText.replace(/\s+/g, ' ').trim();
+
+  // Extract any mailto email addresses from the page
+  const emails = [];
+  $('a[href^="mailto:"]').each((_, el) => {
+    const href = $(el).attr('href');
+    if (!href) return;
+    const email = href.replace(/^mailto:/i, '').split('?')[0].trim();
+    if (email && !emails.includes(email)) {
+      emails.push(email);
+    }
+  });
+
+  // Extract application URLs (buttons/links with common apply text)
+  const application_links = [];
+  $('a, button').each((_, el) => {
+    const text = $(el).text().toLowerCase();
+    if (!/apply|submit application|send cv|send resume/.test(text)) return;
+    const href = $(el).attr('href');
+    if (href && !application_links.includes(href)) {
+      application_links.push(href);
+    }
+  });
+
+  return {
+    title,
+    company,
+    location,
+    description_text: descriptionText || null,
+    description_html: descriptionHtml || null,
+    emails,
+    application_links,
+  };
+}
+
 async function scrapeAndFilterJobs(category = 'general', userQualifications = '') {
   logger.info(`🚀 Starting job search for category: ${category}`);
   const start = Date.now();
@@ -325,4 +375,5 @@ async function scrapeAndFilterJobs(category = 'general', userQualifications = ''
 module.exports = {
   scrapeAndFilterJobs,
   scrapeAllJobsComprehensive,
+  scrapeJobDetails,
 };

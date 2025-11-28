@@ -14,7 +14,10 @@ router.get('/health', healthController.healthCheck);
 router.get('/job-categories', jobsController.getJobCategories);
 router.post('/jobs', jobsController.getJobsByCategory);
 
-// All recent jobs without category filtering
+// Get full details for a specific job from its job_url
+router.post('/job-details', jobsController.getJobDetails);
+
+// CV qualifications extraction
 router.get('/jobs-all', jobsController.getAllRecentJobs);
 
 // CV qualifications extraction
