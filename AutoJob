@@ -1,0 +1,211 @@
+{
+  "task": "Rewrite the existing FastAPI server.py into a fully functional Node.js Express MVC server.",
+  "language": "Node.js (JavaScript)",
+  "architecture": "MVC",
+  "requirements": {
+    "framework": "Express.js",
+    "middleware": ["cors", "helmet", "multer", "express-async-errors"],
+    "pdf_packages": ["pdfkit", "pdf-merger-js"],
+    "scraping": ["axios", "cheerio"],
+    "openai": "openai npm package (chat completions)",
+    "env": "dotenv",
+    "utilities": ["uuid", "fs", "path"]
+  },
+  "environment_variables": [
+    "PORT",
+    "OPENAI_API_KEY",
+    "SCRAPE_USER_AGENT",
+    "TEMP_DIR",
+    "CORS_ORIGINS"
+  ],
+  "folder_structure": {
+    "src": {
+      "index.js": "server bootstrap",
+      "app.js": "express config and middleware",
+      "routes": {
+        "api.js": "all route definitions"
+      },
+      "controllers": {
+        "healthController.js": "handles /api/health",
+        "jobsController.js": "handles /api/jobs",
+        "coverController.js": "handles /api/generate-cover-letter and download-cover-letter",
+        "mergeController.js": "handles /api/merge-documents and download-merged"
+      },
+      "services": {
+        "scrapeService.js": "job scraping logic",
+        "filterService.js": "tech job filtering (keyword + optional AI)",
+        "openaiService.js": "OpenAI ChatCompletion for cover letter",
+        "pdfService.js": "generate PDF from text",
+        "mergeService.js": "merge PDF buffers"
+      },
+      "middleware": {
+        "upload.js": "multer config",
+        "errorHandler.js": "global error handler"
+      },
+      "utils": {
+        "logger.js": "optional"
+      }
+    }
+  },
+  "endpoints": {
+    "GET /api/health": {
+      "description": "Returns application health.",
+      "response": {
+        "status": "healthy",
+        "message": "Cover Letter App API is running"
+      }
+    },
+    "GET /api/jobs": {
+      "description": "Scrape jobs from jobsearchmalawi.com and filter tech jobs.",
+      "logic": [
+        "Call scrapeService.scrapeJobsFromMalawi()",
+        "Call filterService.filterTechJobs()",
+        "Return total_jobs_found, tech_jobs_count, tech_jobs"
+      ],
+      "response_example": {
+        "success": true,
+        "total_jobs_found": 25,
+        "tech_jobs_count": 10,
+        "tech_jobs": []
+      }
+    },
+    "POST /api/generate-cover-letter": {
+      "description": "Generates cover letter text using OpenAI and creates PDF.",
+      "body": {
+        "user_profile": {
+          "full_name": "string",
+          "email": "string",
+          "phone": "string",
+          "address": "string",
+          "skills": ["string"],
+          "experience_years": "number",
+          "education": "string",
+          "summary": "string"
+        },
+        "job_listing": {
+          "title": "string",
+          "company": "string",
+          "location": "string",
+          "job_type": "string",
+          "posted_time": "string",
+          "job_url": "string",
+          "description": "string(optional)"
+        }
+      },
+      "output": {
+        "success": true,
+        "cover_letter_text": "string",
+        "pdf_base64": "base64"
+      }
+    },
+    "POST /api/merge-documents": {
+      "description": "Merge cover letter PDF with additional PDFs.",
+      "multipart_form_data": {
+        "cover_letter_pdf": "base64 string",
+        "uploaded_files": ["PDF files"]
+      },
+      "response": {
+        "success": true,
+        "merged_pdf_base64": "base64",
+        "message": "Documents merged successfully"
+      }
+    },
+    "GET /api/download-cover-letter/:job_id": {
+      "description": "Download PDF from base64 query string.",
+      "query": "pdf_data=base64string",
+      "response": "application/pdf stream"
+    },
+    "GET /api/download-merged/:job_id": {
+      "description": "Download merged PDF from base64 query string.",
+      "query": "pdf_data=base64string",
+      "response": "application/pdf stream"
+    }
+  },
+  "services_logic": {
+    "scrapeService": {
+      "urls_to_try": [
+        "https://jobsearchmalawi.com/",
+        "https://jobsearchmalawi.com/category/information-technology/",
+        "https://jobsearchmalawi.com/jobs/"
+      ],
+      "selectors": {
+        "job_elements": [
+          "div.job-listing",
+          "article.job",
+          "div.job",
+          "article",
+          "div[class*=job]"
+        ],
+        "fields": {
+          "title": "h1/h2/h3/h4 or a with title/job/entry classes",
+          "company": "class*=company/employer/organization OR strong OR b",
+          "location": "class*=location/place/address",
+          "job_url": "a[href]"
+        }
+      },
+      "fallback_jobs": "Replicate Python fallback objects",
+      "tech_demo_jobs": "Also replicate exactly from Python version"
+    },
+    "filterService": {
+      "keyword_list": [
+        "developer", "programmer", "software", "IT", "ICT", "tech",
+        "computer", "web", "data", "system", "network",
+        "database", "ai", "machine learning"
+      ],
+      "ai_filtering": {
+        "condition": "if OPENAI_API_KEY exists",
+        "prompt_style": "same format as Python: list jobs, return only numbers",
+        "mapping": "map returned indexes to jobs"
+      }
+    },
+    "openaiService": {
+      "model": "gpt-3.5-turbo",
+      "task": "Generate professional cover letter",
+      "prompt_rules": [
+        "business letter format",
+        "address to Hiring Manager",
+        "mention role and company",
+        "highlight skills & experience",
+        "approx 300-400 words",
+        "use user_profile + job_listing"
+      ]
+    },
+    "pdfService": {
+      "pdf_creation": "Use PDFKit, write paragraphs split by \\n\\n, include header, return Buffer",
+      "title": "Cover Letter centered",
+      "font_size": 11
+    },
+    "mergeService": {
+      "method": "Use pdf-merger-js",
+      "input": ["Buffer[]"],
+      "output": "Merged PDF Buffer",
+      "order": "Cover letter first, uploaded PDFs after"
+    }
+  },
+  "error_handling": {
+    "return_format": {
+      "success": false,
+      "message": "error description"
+    },
+    "status_codes": {
+      "invalid_input": 400,
+      "server_error": 500
+    }
+  },
+  "performance": {
+    "timeouts": "scraping should timeout at 10 seconds",
+    "limits": {
+      "max_pdf_size_mb": 10,
+      "max_pdf_count": 10
+    }
+  },
+  "success_criteria": [
+    "All endpoints behave EXACTLY like the original FastAPI version.",
+    "PDFs generated match valid PDF format (start with %PDF).",
+    "Merged PDFs remain readable and preserve order.",
+    "Scraping functions reliably and falls back to demo jobs when failing.",
+    "AI filtering works if OpenAI key exists.",
+    "No missing behaviour from the Python code."
+  ]
+}
+
