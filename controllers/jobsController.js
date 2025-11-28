@@ -64,3 +64,27 @@ exports.getJobsByCategory = async (req, res, next) => {
     });
   }
 };
+
+exports.getAllRecentJobs = async (req, res, next) => {
+  try {
+    const jobs = await scrapeService.scrapeAllJobsComprehensive();
+
+    return res.json({
+      success: true,
+      total_jobs_found: jobs.length,
+      jobs,
+      source: 'jobsearchmalawi.com',
+      message: `Found ${jobs.length} recent jobs across all categories`,
+    });
+  } catch (err) {
+    console.error('❌ Error in getAllRecentJobs:', err);
+    return res.status(500).json({
+      success: false,
+      total_jobs_found: 0,
+      jobs: [],
+      source: 'jobsearchmalawi.com',
+      error: err.message,
+      message: 'An error occurred while fetching recent jobs. Please try again.',
+    });
+  }
+};
