@@ -3,6 +3,7 @@ const cheerio = require('cheerio');
 const { URL } = require('url');
 const filterService = require('./filterService');
 const logger = require('../utils/logger');
+const puppeteer = require('puppeteer');
 
 const JOBSEARCH_MALAWI_URLS = [
   'https://jobsearchmalawi.com/',
@@ -69,12 +70,15 @@ function extractJobDetails($elem, baseUrl = 'https://jobsearchmalawi.com') {
       return '';
     };
 
-    let title = findText(['h1', 'h2', 'h3', 'h4', 'a']);
+    // WP Job Manager / job_listing-specific selectors first
+    let title = findText(['.job_listing-title', '.job-title', '.job_title', 'h3.job-title', 'h3.job_title', 'h2', 'h3', 'a.job_listing-clickbox', 'a.job-title', 'a']);
     if (!title) return null;
     const badTitles = ['read more', 'view more', 'see more', 'apply now'];
     if (title.length < 3 || badTitles.includes(title.toLowerCase())) return null;
 
     let company = findText([
+      '.job_listing-company',
+      '.job-company',
       '.company',
       '.employer',
       '.organization',
@@ -83,12 +87,16 @@ function extractJobDetails($elem, baseUrl = 'https://jobsearchmalawi.com') {
     ]) || 'Company Not Listed';
 
     let location = findText([
+      '.job_listing-location',
+      '.job-location',
       '.location',
       '.place',
       '.address',
     ]) || 'Malawi';
 
     let postedTime = findText([
+      '.job_listing-date',
+      '.date-posted',
       '.date',
       '.time',
       '.posted',
@@ -96,7 +104,9 @@ function extractJobDetails($elem, baseUrl = 'https://jobsearchmalawi.com') {
     ]) || 'Recent';
 
     let jobUrl = '';
-    const link = $elem.find('a').first();
+    // Prefer the main clickable job link if present
+    const mainLink = $elem.find('a.job_listing-clickbox, a.job-title, a.job_title').first();
+    const link = mainLink.length ? mainLink : $elem.find('a').first();
     if (link && link.attr('href')) {
       jobUrl = link.attr('href');
       if (!jobUrl.startsWith('http')) {
@@ -105,11 +115,11 @@ function extractJobDetails($elem, baseUrl = 'https://jobsearchmalawi.com') {
     }
 
     return {
-      title,
-      company,
-      location,
+      title: title.trim(),
+      company: company.trim(),
+      location: location.trim(),
       job_type: 'Full Time',
-      posted_time: postedTime,
+      posted_time: postedTime.trim(),
       job_url: jobUrl,
       description: '',
       source_website: 'jobsearchmalawi.com',
@@ -122,88 +132,159 @@ function extractJobDetails($elem, baseUrl = 'https://jobsearchmalawi.com') {
 
 async function scrapeAllJobsComprehensive() {
   const jobs = [];
-  const headers = { 'User-Agent': DEFAULT_USER_AGENT };
-
   logger.info('🚀 Starting comprehensive scraping of ALL jobs from JobSearch Malawi');
 
-  const visited = new Set();
-  const queue = [...JOBSEARCH_MALAWI_URLS];
-  let pageCount = 0;
+  const useHeadless = process.env.USE_HEADLESS_BROWSER === 'true';
 
-  while (queue.length && pageCount < 20) {
-    const currentUrl = queue.shift();
-    if (!currentUrl || visited.has(currentUrl)) continue;
-    visited.add(currentUrl);
-    pageCount += 1;
-
+  if (useHeadless) {
+    // Headless browser mode (Puppeteer): lets site JS render all listings
+    let browser;
     try {
-      logger.info(`📄 Scraping page ${pageCount}: ${currentUrl}`);
-      const resp = await axios.get(currentUrl, {
-        headers,
-        timeout: parseInt(process.env.SCRAPE_TIMEOUT_MS || '10000', 10),
+      logger.info('🧠 Using headless browser (Puppeteer) for scraping');
+      browser = await puppeteer.launch({
+        headless: 'new',
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
       });
-      const $ = cheerio.load(resp.data);
+      const page = await browser.newPage();
+      await page.setUserAgent(DEFAULT_USER_AGENT);
 
-      let jobElems =
-        $('div.job-listing').toArray();
-      if (!jobElems.length) jobElems = $('article.job').toArray();
-      if (!jobElems.length) jobElems = $('div.job').toArray();
-      if (!jobElems.length) jobElems = $('article').toArray();
-      if (!jobElems.length) jobElems = $('div[class*=job], div[class*=listing], div[class*=card], div[class*=post]').toArray();
+      for (const url of JOBSEARCH_MALAWI_URLS) {
+        logger.info(`📄 (browser) Loading ${url}`);
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
 
-      if (!jobElems.length) {
-        logger.warn('   ⚠️  No job elements found, trying broader search...');
-        jobElems = $('article, div.post, div.entry, div.item, div.content').toArray();
-      }
+        // Wait a bit for JS to render initial listings
+        await new Promise(resolve => setTimeout(resolve, 3000));
 
-      logger.info(`   📊 Found ${jobElems.length} potential job elements`);
-
-      let jobsFoundOnPage = 0;
-      let oldJobsCount = 0;
-
-      for (const elem of jobElems) {
-        const jobData = extractJobDetails($(elem));
-        if (!jobData) continue;
-
-        if (!isRecentJob(jobData.posted_time, 30)) {
-          oldJobsCount += 1;
-          continue;
-        }
-
-        const isDuplicate = jobs.some(
-          (j) =>
-            j.title.toLowerCase().trim() === jobData.title.toLowerCase().trim() &&
-            j.company.toLowerCase().trim() === jobData.company.toLowerCase().trim(),
-        );
-        if (isDuplicate) continue;
-
-        jobs.push(jobData);
-        jobsFoundOnPage += 1;
-      }
-
-      logger.info(`   ✅ Extracted ${jobsFoundOnPage} valid jobs from this page`);
-      if (oldJobsCount > 0) logger.info(`   ⏰ Skipped ${oldJobsCount} old jobs`);
-
-      if (pageCount <= 15) {
-        const links = $('a[href*="/page/"]').toArray();
-        for (const link of links) {
-          const href = $(link).attr('href');
-          if (!href) continue;
-          const url = href.startsWith('http') ? href : new URL(href, currentUrl).toString();
-          if (!visited.has(url) && !queue.includes(url)) {
-            queue.push(url);
+        // Scroll to bottom repeatedly to trigger any lazy-loading of more listings
+        for (let i = 0; i < 10; i += 1) {
+          const beforeCount = await page.$$eval('li.job_listing, .job_listing, [class*=job_listing]', els => els.length);
+          await page.evaluate(() => {
+            window.scrollTo(0, document.body.scrollHeight);
+          });
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          const afterCount = await page.$$eval('li.job_listing, .job_listing, [class*=job_listing]', els => els.length);
+          if (!afterCount || afterCount <= beforeCount) {
+            break;
           }
         }
+
+        const html = await page.content();
+        const $ = cheerio.load(html);
+
+        // JobSearch Malawi listings likely use WP Job Manager markup (li.job_listing)
+        let jobElems = $('li.job_listing, .job_listing, [class*=job_listing]').toArray();
+        if (!jobElems.length) {
+          jobElems = $('article.job, div.job, article, div[class*=job]').toArray();
+        }
+
+        logger.info(`   📊 (browser) Found ${jobElems.length} potential job elements`);
+
+        let jobsFoundOnPage = 0;
+        for (const elem of jobElems) {
+          const jobData = extractJobDetails($(elem));
+          if (!jobData) continue;
+
+          // For headless mode, include all visible listings regardless of age
+          const isDuplicate = jobs.some(
+            (j) =>
+              j.title.toLowerCase().trim() === jobData.title.toLowerCase().trim() &&
+              j.company.toLowerCase().trim() === jobData.company.toLowerCase().trim(),
+          );
+          if (isDuplicate) continue;
+
+          jobs.push(jobData);
+          jobsFoundOnPage += 1;
+        }
+        logger.info(`   ✅ (browser) Extracted ${jobsFoundOnPage} valid jobs from this page`);
       }
     } catch (err) {
-      logger.error(`   ❌ Error scraping ${currentUrl}:`, err.message || err);
-      continue;
+      logger.error('   ❌ Headless scraping failed, falling back to HTTP scraping:', err.message || err);
+    } finally {
+      if (browser) await browser.close();
+    }
+  }
+
+  // Fallback / default: HTTP + cheerio (existing behavior)
+  if (!jobs.length) {
+    const headers = { 'User-Agent': DEFAULT_USER_AGENT };
+
+    const visited = new Set();
+    const queue = [...JOBSEARCH_MALAWI_URLS];
+    let pageCount = 0;
+
+    while (queue.length && pageCount < 20) {
+      const currentUrl = queue.shift();
+      if (!currentUrl || visited.has(currentUrl)) continue;
+      visited.add(currentUrl);
+      pageCount += 1;
+
+      try {
+        logger.info(`📄 Scraping page ${pageCount}: ${currentUrl}`);
+        const resp = await axios.get(currentUrl, {
+          headers,
+          timeout: parseInt(process.env.SCRAPE_TIMEOUT_MS || '10000', 10),
+        });
+        const $ = cheerio.load(resp.data);
+
+        let jobElems = $('div.job-listing').toArray();
+        if (!jobElems.length) jobElems = $('article.job').toArray();
+        if (!jobElems.length) jobElems = $('div.job').toArray();
+        if (!jobElems.length) jobElems = $('article').toArray();
+        if (!jobElems.length) jobElems = $('div[class*=job], div[class*=listing], div[class*=card], div[class*=post]').toArray();
+
+        if (!jobElems.length) {
+          logger.warn('   ⚠️  No job elements found, trying broader search...');
+          jobElems = $('article, div.post, div.entry, div.item, div.content').toArray();
+        }
+
+        logger.info(`   📊 Found ${jobElems.length} potential job elements`);
+
+        let jobsFoundOnPage = 0;
+        let oldJobsCount = 0;
+
+        for (const elem of jobElems) {
+          const jobData = extractJobDetails($(elem));
+          if (!jobData) continue;
+
+          if (!isRecentJob(jobData.posted_time, 30)) {
+            oldJobsCount += 1;
+            continue;
+          }
+
+          const isDuplicate = jobs.some(
+            (j) =>
+              j.title.toLowerCase().trim() === jobData.title.toLowerCase().trim() &&
+              j.company.toLowerCase().trim() === jobData.company.toLowerCase().trim(),
+          );
+          if (isDuplicate) continue;
+
+          jobs.push(jobData);
+          jobsFoundOnPage += 1;
+        }
+
+        logger.info(`   ✅ Extracted ${jobsFoundOnPage} valid jobs from this page`);
+        if (oldJobsCount > 0) logger.info(`   ⏰ Skipped ${oldJobsCount} old jobs`);
+
+        if (pageCount <= 15) {
+          const links = $('a[href*="/page/"]').toArray();
+          for (const link of links) {
+            const href = $(link).attr('href');
+            if (!href) continue;
+            const url = href.startsWith('http') ? href : new URL(href, currentUrl).toString();
+            if (!visited.has(url) && !queue.includes(url)) {
+              queue.push(url);
+            }
+          }
+        }
+      } catch (err) {
+        logger.error(`   ❌ Error scraping ${currentUrl}:`, err.message || err);
+        continue;
+      }
     }
   }
 
   logger.info('🎯 Comprehensive scraping completed!');
-  logger.info(`📊 Total pages scraped: ${pageCount}`);
-  logger.info(`📋 Total jobs found: ${jobs.length}`);
+  logger.info(`📊 Total jobs found: ${jobs.length}`);
 
   return jobs;
 }

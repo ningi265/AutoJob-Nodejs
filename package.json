@@ -2,10 +2,10 @@
   "name": "autojob-backend",
   "version": "1.0.0",
   "description": "JobSearch Malawi scraper + cover letter generator (Express MVC)",
-  "main": "src/index.js",
+  "main": "index.js",
   "scripts": {
-    "start": "NODE_ENV=production node src/index.js",
-    "dev": "nodemon src/index.js"
+    "start": "NODE_ENV=production node index.js",
+    "dev": "nodemon index.js"
   },
   "dependencies": {
     "axios": "^1.7.0",
@@ -17,8 +17,9 @@
     "helmet": "^7.0.0",
     "multer": "^1.4.5-lts.1",
     "openai": "^4.0.0",
+    "pdf-merger-js": "^5.0.0",
     "pdfkit": "^0.13.0",
-    "pdf-merger-js": "^5.0.0"
+    "puppeteer": "^23.11.1"
   },
   "devDependencies": {
     "nodemon": "^3.0.0"
