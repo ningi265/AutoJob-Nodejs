@@ -317,14 +317,38 @@ async function scrapeJobDetails(jobUrl) {
     }
   });
 
-  // Extract application URLs (buttons/links with common apply text)
+  // Extract application URLs (prefer links in the application/description area)
   const application_links = [];
-  $('a, button').each((_, el) => {
+  const appScope = $('.job_application, .job-application, .application, .application_details, .job_description');
+
+  appScope.find('a, button').each((_, el) => {
     const text = $(el).text().toLowerCase();
-    if (!/apply|submit application|send cv|send resume/.test(text)) return;
     const href = $(el).attr('href');
-    if (href && !application_links.includes(href)) {
-      application_links.push(href);
+
+    // Only consider obvious apply actions or explicit external links in the application area
+    const isApplyText = /apply|submit application|send cv|send resume/.test(text);
+    const isHttpLink = href && /^https?:\/\//i.test(href || '');
+
+    if (!isApplyText && !isHttpLink) return;
+
+    if (!href) return;
+
+    // Avoid adding the main job listing URL itself as an application link
+    try {
+      const jobUrlHost = new URL(jobUrl).host;
+      const hrefUrl = new URL(href, jobUrl);
+      const isSamePage = hrefUrl.href.replace(/#.*$/, '') === jobUrl.replace(/#.*$/, '');
+      if (isSamePage) return;
+
+      // Still allow off-site links (e.g. ZohoRecruit, company careers pages)
+      if (!application_links.includes(hrefUrl.href)) {
+        application_links.push(hrefUrl.href);
+      }
+    } catch (e) {
+      // If URL parsing fails, fall back to raw href if unique
+      if (!application_links.includes(href)) {
+        application_links.push(href);
+      }
     }
   });
 
