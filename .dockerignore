@@ -1,0 +1,16 @@
+# Ignore Node.js dependencies, as they will be installed inside the container
+node_modules
+
+# Ignore git repository files
+.git
+.gitignore
+
+# Ignore environment files - these should be passed in at runtime
+.env
+
+# Ignore Docker files
+Dockerfile
+.dockerignore
+
+# Ignore local development files
+npm-debug.log
